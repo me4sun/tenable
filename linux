@@ -1,0 +1,128 @@
+import requests
+import csv
+import sys
+import re
+
+# -----------------------------
+# CONFIG
+# -----------------------------
+SC_HOST = "https://tenablesc.example.com"
+USERNAME = "api_user"
+PASSWORD = "api_password"
+CSV_FILE = "tenable_rpm_inventory_22869.csv"
+PLUGIN_ID = "22869"
+
+# -----------------------------
+# AUTH
+# -----------------------------
+session = requests.Session()
+session.verify = False  # Set True if using proper certs
+
+login_payload = {
+    "username": USERNAME,
+    "password": PASSWORD
+}
+
+r = session.post(f"{SC_HOST}/rest/token", json=login_payload)
+if r.status_code != 200:
+    print("Auth failed")
+    sys.exit(1)
+
+token = r.json()["response"]["token"]
+session.headers.update({"X-SecurityCenter": token})
+
+# -----------------------------
+# ANALYSIS QUERY (PLUGIN 22869)
+# -----------------------------
+analysis_payload = {
+    "type": "vuln",
+    "query": {
+        "tool": "vulndetails",
+        "filters": [
+            {
+                "filterName": "pluginID",
+                "operator": "=",
+                "value": PLUGIN_ID
+            }
+        ],
+        "columns": [
+            "hostname",
+            "ip",
+            "operatingSystem",
+            "pluginOutput"
+        ]
+    }
+}
+
+  SCAN_ID = "12345"
+
+analysis_payload = {
+    "type": "vuln",
+    "query": {
+        "tool": "vulndetails",
+        "filters": [
+            {
+                "filterName": "pluginID",
+                "operator": "=",
+                "value": PLUGIN_ID
+            },
+            {
+                "filterName": "scanID",
+                "operator": "=",
+                "value": SCAN_ID
+            }
+        ],
+        "columns": [
+            "hostname",
+            "ip",
+            "operatingSystem",
+            "pluginOutput"
+        ]
+    }
+}
+
+  
+resp = session.post(f"{SC_HOST}/rest/analysis", json=analysis_payload)
+if resp.status_code != 200:
+    print("Analysis query failed")
+    sys.exit(1)
+
+results = resp.json()["response"]["results"]
+
+# -----------------------------
+# PARSE RPM OUTPUT
+# -----------------------------
+rpm_line_re = re.compile(r"^\s*([a-zA-Z0-9_.+-]+-[0-9][^\s]+)\s*$")
+
+with open(CSV_FILE, "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow([
+        "hostname",
+        "ip_address",
+        "operating_system",
+        "installed_rpm"
+    ])
+
+    for item in results:
+        hostname = item.get("hostname", "")
+        ip = item.get("ip", "")
+        os_info = item.get("operatingSystem", "")
+        output = item.get("pluginOutput", "")
+
+        for line in output.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+
+            # Match RPM-style package lines
+            m = rpm_line_re.match(line)
+            if m:
+                rpm_name = m.group(1)
+                writer.writerow([
+                    hostname,
+                    ip,
+                    os_info,
+                    rpm_name
+                ])
+
+print(f"RPM inventory CSV written to: {CSV_FILE}")
