@@ -6,85 +6,84 @@ import re
 # -----------------------------
 # CONFIG
 # -----------------------------
-SC_HOST = "https://tenablesc.example.com"
-USERNAME = "api_user"
-PASSWORD = "api_password"
+SC_HOST = "https://Tenable.sc"
+ACCESS_KEY = "4def6bc216f14c1ab86dfba8738ff4a5"
+SECRET_KEY = "a47d1d3a071443449a75821129526b96"
+
 CSV_FILE = "tenable_rpm_inventory_22869.csv"
 PLUGIN_ID = "22869"
 
+# Optional scoping
+# Uncomment ONE if needed
+SCAN_ID = None          # e.g. "12345"
+HOST_IP = None         # e.g. "192.168.1.10"
+
 # -----------------------------
-# AUTH
+# SESSION + API KEY AUTH
 # -----------------------------
 session = requests.Session()
-session.verify = False  # Set True if using proper certs
+session.verify = False  # change to True if you have valid certs
 
-login_payload = {
-    "username": USERNAME,
-    "password": PASSWORD
-}
+session.headers.update({
+    "X-ApiKeys": f"accesskey={ACCESS_KEY}; secretkey={SECRET_KEY}",
+    "Content-Type": "application/json"
+})
 
-r = session.post(f"{SC_HOST}/rest/token", json=login_payload)
-if r.status_code != 200:
-    print("Auth failed")
+# Sanity check (like your curl)
+test = session.get(f"{SC_HOST}/rest/currentUser")
+if test.status_code != 200:
+    print("API key authentication failed")
+    print(test.status_code, test.text)
     sys.exit(1)
 
-token = r.json()["response"]["token"]
-session.headers.update({"X-SecurityCenter": token})
+# -----------------------------
+# BUILD FILTERS
+# -----------------------------
+filters = [
+    {
+        "filterName": "pluginID",
+        "operator": "=",
+        "value": PLUGIN_ID
+    }
+]
+
+if SCAN_ID:
+    filters.append({
+        "filterName": "scanID",
+        "operator": "=",
+        "value": SCAN_ID
+    })
+
+if HOST_IP:
+    filters.append({
+        "filterName": "ip",
+        "operator": "=",
+        "value": HOST_IP
+    })
 
 # -----------------------------
-# ANALYSIS QUERY (PLUGIN 22869)
+# ANALYSIS QUERY
 # -----------------------------
 analysis_payload = {
     "type": "vuln",
     "query": {
         "tool": "vulndetails",
-        "filters": [
-            {
-                "filterName": "pluginID",
-                "operator": "=",
-                "value": PLUGIN_ID
-            }
-        ],
+        "filters": filters,
         "columns": [
             "hostname",
             "ip",
             "operatingSystem",
             "pluginOutput"
-        ]
-    }
-}
-
-  SCAN_ID = "12345"
-
-analysis_payload = {
-    "type": "vuln",
-    "query": {
-        "tool": "vulndetails",
-        "filters": [
-            {
-                "filterName": "pluginID",
-                "operator": "=",
-                "value": PLUGIN_ID
-            },
-            {
-                "filterName": "scanID",
-                "operator": "=",
-                "value": SCAN_ID
-            }
         ],
-        "columns": [
-            "hostname",
-            "ip",
-            "operatingSystem",
-            "pluginOutput"
-        ]
+        "limit": 10000,
+        "offset": 0
     }
 }
 
-  
 resp = session.post(f"{SC_HOST}/rest/analysis", json=analysis_payload)
 if resp.status_code != 200:
     print("Analysis query failed")
+    print(resp.status_code, resp.text)
     sys.exit(1)
 
 results = resp.json()["response"]["results"]
@@ -114,7 +113,6 @@ with open(CSV_FILE, "w", newline="") as f:
             if not line:
                 continue
 
-            # Match RPM-style package lines
             m = rpm_line_re.match(line)
             if m:
                 rpm_name = m.group(1)
